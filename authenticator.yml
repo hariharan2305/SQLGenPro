@@ -1,0 +1,17 @@
+credentials:
+  usernames:
+    hariharan:
+      email: hariharan@gmail.com
+      name: Hariharan
+      password: $2b$12$tdKt5p7nfhQgcDG30FldqeTZLUio5P.vAqKXSqiUHxURaei7Npkq2 #Password:abc123 # To be replaced with hashed password
+    jack:
+      email: jack@gmail.com
+      name: Jack Sparrow
+      password: $2b$12$N9w9IGLBfLv1tne8lzalUOm2hH4ytnvbTgQ.vs0jV6EbKt9x2QPr6 #Password:blackpearl To be replaced with hashed password
+cookie:
+  expiry_days: 7
+  key: random_signature_key # Must be string
+  name: random_cookie_name
+preauthorized:
+  emails:
+  # - melsby@gmail.com
