@@ -15,13 +15,14 @@ load_dotenv()
 # Brining the python scripts from the src folder
 sys.path.append(os.path.abspath('src'))
 from src.add_logo import add_logo
-from src.utils import list_catalog_schema_tables, create_erd_diagram, mermaid, process_llm_response
+from src.utils import list_catalog_schema_tables, create_erd_diagram, mermaid, process_llm_response_for_mermaid, quick_analysis 
+from src.utils import  create_sql, load_data_from_query, process_llm_response_for_sql
 
 # Page Config
 st.set_page_config(
     page_title="SQLGenPro",
     page_icon="📊",
-    layout="centered",
+    layout="wide",
     initial_sidebar_state="expanded",
 )
 
@@ -69,6 +70,7 @@ if authentication_status:
 
     # Selecting the schema 
     schema_candidate_list = catalog_schema_mapping_df[catalog_schema_mapping_df["catalog"]==catalog]["schema"].values[0]
+    schema_candidate_list = [val for val in schema_candidate_list if val != "dev_tools"]
     schema = st.sidebar.selectbox("Select the schema", options=schema_candidate_list)
 
     # Selecting the Tables
@@ -77,21 +79,53 @@ if authentication_status:
 
     if "All" in table_list:
         table_list = table_candidate_list
-
-    # st.write(f"Selected Catalog: {catalog}")
-    # st.write(f"Selected Schema: {schema}")
-    # st.write(f"Selected Tables: {table_list}")
-
-    response = create_erd_diagram(catalog,schema,table_list)
-    # response = '"""'+response+'"""'
-    # st.text(response)
-    response = process_llm_response(response)
-    # st.text(response)
-    mermaid(response)
-
     
+    if st.sidebar.checkbox(":orange[Proceed]"):        
+        with st.expander(":red[View the ERD Diagram]"):
+            response = create_erd_diagram(catalog,schema,table_list)
+            if st.button("Regenerate"):
+                # Creating the ERD Diagram
+                create_erd_diagram.clear()
+                mermaid_code = process_llm_response_for_mermaid(response)
+                mermaid(mermaid_code)
+            else:
+                mermaid_code = process_llm_response_for_mermaid(response)
+                mermaid(mermaid_code)
 
-    
+        
+        # Quick Analysis
+        st.markdown("<h2 style='text-align: left; color: orange;'> Quick Analysis </h2>", unsafe_allow_html=True)
+        quick_analysis_questions = quick_analysis(user_name,mermaid_code)
+        if st.button("Need new ideas?"):
+            quick_analysis.clear()
+            quick_analysis_questions = quick_analysis(user_name,mermaid_code)
+            questions = quick_analysis_questions['text']['quick_analysis_questions']
+            selected_question = st.selectbox("Select the question", options=questions)
+            if st.checkbox("Analyze"):
+                st.write(f"##### {selected_question}")
+                # st.text(mermaid_code)
+                response_sql = create_sql(selected_question,mermaid_code,catalog,schema)
+                response_sql = process_llm_response_for_sql(response_sql)
+                st.code(response_sql)
+                if st.button("Query Sample Data"):
+                    df_query = load_data_from_query(response_sql)
+                    st.write(df_query)
+                    
+
+        else:
+            questions = quick_analysis_questions['text']['quick_analysis_questions']
+            selected_question = st.selectbox("Select the question", options=questions)
+            if st.checkbox("Analyze"):
+                st.write(f"##### {selected_question}")
+                # st.text(mermaid_code)
+                response_sql = create_sql(selected_question,mermaid_code,catalog,schema)
+                response_sql = process_llm_response_for_sql(response_sql)
+                st.code(response_sql)
+                if st.button("Query Sample Data"):
+                    df_query = load_data_from_query(response_sql)
+                    st.write(df_query)
+            
+
 
 
 
