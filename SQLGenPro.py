@@ -16,13 +16,13 @@ load_dotenv()
 sys.path.append(os.path.abspath('src'))
 from src.add_logo import add_logo
 from src.utils import list_catalog_schema_tables, create_erd_diagram, mermaid, process_llm_response_for_mermaid, quick_analysis 
-from src.utils import  create_sql, load_data_from_query, process_llm_response_for_sql
+from src.utils import  create_sql, load_data_from_query, process_llm_response_for_sql, create_advanced_sql, get_enriched_database_schema
 
 # Page Config
 st.set_page_config(
     page_title="SQLGenPro",
     page_icon="📊",
-    layout="wide",
+    layout="centered",
     initial_sidebar_state="expanded",
 )
 
@@ -91,44 +91,80 @@ if authentication_status:
             else:
                 mermaid_code = process_llm_response_for_mermaid(response)
                 mermaid(mermaid_code)
+            
+            # Getting the table schema
+            table_schema = get_enriched_database_schema(catalog,schema,table_list)
 
         
         # Quick Analysis
-        st.markdown("<h2 style='text-align: left; color: orange;'> Quick Analysis </h2>", unsafe_allow_html=True)
-        quick_analysis_questions = quick_analysis(user_name,mermaid_code)
-        if st.button("Need new ideas?"):
-            quick_analysis.clear()
+        st.markdown("<h2 style='text-align: left; color: red;'> Quick Analysis </h2>", unsafe_allow_html=True)
+        with st.expander(":red[View the Section]"):
             quick_analysis_questions = quick_analysis(user_name,mermaid_code)
-            questions = quick_analysis_questions['text']['quick_analysis_questions']
-            selected_question = st.selectbox("Select the question", options=questions)
-            if st.checkbox("Analyze"):
-                st.write(f"##### {selected_question}")
-                # st.text(mermaid_code)
-                response_sql = create_sql(selected_question,mermaid_code,catalog,schema)
+            if st.button("Need new ideas?"):
+                quick_analysis.clear()
+                quick_analysis_questions = quick_analysis(user_name,table_schema)
+                questions = quick_analysis_questions['text']['quick_analysis_questions']
+                selected_question = st.selectbox("Select the question", options=questions)
+                if st.checkbox("Analyze"):
+                    st.write(f"##### {selected_question}")
+                    # st.text(mermaid_code)
+                    response_sql = create_sql(selected_question,table_schema)
+                    response_sql = process_llm_response_for_sql(response_sql)
+                    st.code(response_sql)
+                    if st.button("Query Sample Data"):
+                        df_query = load_data_from_query(response_sql)
+                        # PLACEHOLDER: Insert the selected question along with the response_sql in the database dev_tools.sqlgenpro_user_query_history
+                        st.write(df_query)
+                        
+
+            else:
+                questions = quick_analysis_questions['text']['quick_analysis_questions']
+                selected_question = st.selectbox("Select the question", options=questions)
+                if st.checkbox("Analyze"):
+                    st.write(f"##### {selected_question}")
+                    # st.text(mermaid_code)
+                    response_sql = create_sql(selected_question,table_schema)
+                    response_sql = process_llm_response_for_sql(response_sql)
+                    st.code(response_sql)
+                    if st.button("Query Sample Data"):
+                        df_query = load_data_from_query(response_sql)
+                        st.write(df_query)
+
+        # Deep-Dive Analysis
+        st.markdown("<h2 style='text-align: left; color: red;'> Deep-Dive Analysis </h2>", unsafe_allow_html=True)
+
+        with st.expander(":red[View the Section]"):
+            dd_question = st.text_area("Enter your question here..",key="dd-10",)
+
+            generate_sql_1 = st.checkbox("Generate SQL",key="dd-11")
+            if generate_sql_1:
+                response_sql = create_sql(dd_question,table_schema)
                 response_sql = process_llm_response_for_sql(response_sql)
                 st.code(response_sql)
-                if st.button("Query Sample Data"):
-                    df_query = load_data_from_query(response_sql)
-                    st.write(df_query)
-                    
 
-        else:
-            questions = quick_analysis_questions['text']['quick_analysis_questions']
-            selected_question = st.selectbox("Select the question", options=questions)
-            if st.checkbox("Analyze"):
-                st.write(f"##### {selected_question}")
-                # st.text(mermaid_code)
-                response_sql = create_sql(selected_question,mermaid_code,catalog,schema)
-                response_sql = process_llm_response_for_sql(response_sql)
-                st.code(response_sql)
-                if st.button("Query Sample Data"):
-                    df_query = load_data_from_query(response_sql)
-                    st.write(df_query)
-            
+                col1, col2 = st.columns(2)
+                query_sample_data_1 = col1.checkbox("Query Sample Data",key="dd-12")
+                if query_sample_data_1:
+                    df_query_1 = load_data_from_query(response_sql)
+                    col1.write(df_query_1)
+                col2.checkbox("Save the query",key="dd-13")
+
+                build_1 = col1.checkbox("Build on top of this result?",key="dd-21")
+                if build_1:
+                    dd_question_2 = st.text_area("Enter your question here..",key="dd-23",)
+
+                    generate_sql_2 = st.checkbox("Generate SQL",key="dd-24")
+                    if generate_sql_2:
+                        response_sql = create_advanced_sql(dd_question,response_sql,mermaid_code,catalog,schema)
+                        response_sql = process_llm_response_for_sql(response_sql)
+                        st.code(response_sql)
+
+                        col1, col2 = st.columns(2)
+                        query_sample_data_2 = col1.checkbox("Query Sample Data",key="dd-25")
+                        if query_sample_data_2:
+                            df_query_2 = load_data_from_query(response_sql)
+                            col1.write(df_query_2)
+                        
+                        col2.checkbox("Save the query",key="dd-26")
 
 
-
-
-
-   
-    

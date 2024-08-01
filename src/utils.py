@@ -51,6 +51,61 @@ def list_catalog_schema_tables():
             return result_tables
         
 
+# Function to create enriched database schema details for the Prompt
+@st.cache_data        
+def get_enriched_database_schema(catalog,schema,tables_list):
+    table_schema = ""
+
+    # Iterating through each selected tables and get the list of columns for each table.
+    for table in tables_list:
+
+        conn = sql.connect(server_hostname = os.getenv("DATABRICKS_SERVER_HOSTNAME"),
+                        http_path       = os.getenv("DATABRICKS_HTTP_PATH"),
+                        access_token    = os.getenv("DATABRICKS_ACCESS_TOKEN"))        
+
+        # Getting the Schema for the table
+        query = f"SHOW CREATE TABLE `{catalog}`.{schema}.{table}"
+        df = pd.read_sql(sql=query,con=conn)
+        stmt = df['createtab_stmt'][0]
+        stmt = stmt.split("USING")[0]
+
+        # Filtering the String columns from the table to identify Categorical columns
+        query = f"DESCRIBE TABLE `{catalog}`.{schema}.{table}"
+        df = pd.read_sql(sql=query,con=conn)
+        string_cols = df[df['data_type']=='string']['col_name'].values.tolist()
+
+        sql_distinct = ""
+        for col in string_cols:
+            # Getting the distinct values for each column as rows
+            if col == string_cols[-1]:
+                sql_distinct += f"SELECT '{col}' AS column_name, COUNT(DISTINCT {col}) AS cnt, ARRAY_AGG(DISTINCT {col}) AS values FROM `{catalog}`.{schema}.{table}"
+            else:
+                sql_distinct += f"SELECT '{col}' AS column_name, COUNT(DISTINCT {col}) AS cnt, ARRAY_AGG(DISTINCT {col}) AS values FROM `{catalog}`.{schema}.{table} UNION ALL "
+
+        # print(sql_distinct)
+        df_categories = pd.read_sql(sql=sql_distinct,con=conn)
+        df_categories = df_categories[df_categories['cnt'] <= 20]
+        df_categories = df_categories.drop(columns='cnt')
+
+        if df_categories.empty:
+            df_categories_string = "No Categorical Fields"
+        else:
+            df_categories_string = df_categories.to_string(index=False)
+
+
+        # Getting the sample rows from the table
+        query = f"SELECT * FROM `{catalog}`.{schema}.{table} LIMIT 3"
+        df = pd.read_sql(sql=query,con=conn)
+        sample_rows = df.to_string(index=False)
+
+        if table_schema == "":
+            table_schema = stmt + "\n" + sample_rows + "\n\nCategorical Fields:\n" + df_categories_string + "\n"
+        else:
+            table_schema = table_schema + "\n" + stmt + "\n" + sample_rows + "\n\nCategorical Fields:\n" + df_categories_string + "\n"        
+    
+    return table_schema
+        
+
 # Function to render the mermaid diagram
 def process_llm_response_for_mermaid(response: str) -> str:
     # Extract the Mermaid code block from the response
@@ -74,9 +129,24 @@ def mermaid(code: str) -> None:
     # Escaping backslashes for special characters in the code
     code_escaped = code.replace("\\", "\\\\").replace("`", "\\`")
     
+    # components.html(
+    #     f"""
+    #     <div id="mermaid-container" style="width: 100%; height: 100%; overflow: auto;">
+    #         <pre class="mermaid">
+    #             {code_escaped}
+    #         </pre>
+    #     </div>
+
+    #     <script type="module">
+    #         import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    #         mermaid.initialize({{ startOnLoad: true }});
+    #     </script>
+    #     """,
+    #     height=800  # You can adjust the height as needed
+    # )       
     components.html(
         f"""
-        <div id="mermaid-container" style="width: 100%; height: 100%; overflow: auto;">
+        <div id="mermaid-container" style="width: 100%; height: 800px; overflow: auto;">
             <pre class="mermaid">
                 {code_escaped}
             </pre>
@@ -88,7 +158,7 @@ def mermaid(code: str) -> None:
         </script>
         """,
         height=800  # You can adjust the height as needed
-    )       
+    )
 
 # Function to create the ERD diagram for the selected schema and tables 
 @st.experimental_fragment      
@@ -145,7 +215,7 @@ def create_erd_diagram(catalog,schema,tables_list):
 # Function to create Quick Analysis questions based on the given schema and tables
 @st.experimental_fragment
 @st.cache_data
-def quick_analysis(user_name,mermaid_code):
+def quick_analysis(user_name,table_schema):
     ### Getting the user_query_history details to list the top 5 queries for the user
     df_user = load_user_query_history(user_name)
 
@@ -163,13 +233,13 @@ def quick_analysis(user_name,mermaid_code):
 
     ### Defining the prompt template
     template_string = """
-    Using the provided Mermaid code for the ERD diagram (delimited by ##), generate the top 5 "quick analysis" questions based on the relationships between the tables which can be answered by creating an SQL code. 
+    Using the provided SCHEMA (delimited by ##), generate the top 5 "quick analysis" questions based on the relationships between the tables which can be answered by creating a Databricks SQL code. 
     These questions should be practical and insightful, targeting the kind of business inquiries a product manager or analyst would typically investigate daily.
     If the user_history is empty, then create the questions based on the given Mermaid code. If the user_history is not empty, then create the questions based on the user_history and the given Mermaid code.
 
-    Mermaid code:
+    SCHEMA:
     ##
-    {mermaid_code}
+    {table_schema}
     ##
 
     User History:
@@ -190,7 +260,7 @@ def quick_analysis(user_name,mermaid_code):
         output_parser=output_parser
     )
 
-    response =  llm_chain.invoke({"mermaid_code":mermaid_code, "user_history":user_history,"fomat_instructions":format_instructions})
+    response =  llm_chain.invoke({"table_schema":table_schema, "user_history":user_history,"fomat_instructions":format_instructions})
     # output = response['text']  
 
     return response
@@ -198,7 +268,53 @@ def quick_analysis(user_name,mermaid_code):
 # Function to create SQL code for the selected question and return the data from the database
 @st.experimental_fragment
 @st.cache_data
-def create_sql(question,mermaid_code,catalog,schema):
+def create_sql(question,table_schema):
+
+    ### Defining the prompt template
+    template_string = """ 
+    You are a expert data engineer working with a Databricks environment.\
+    Your task is to generate a working SQL query in Databricks SQL dialect. \
+    During join if column name are same please use alias ex llm.customer_id \
+    in select statement. It is also important to respect the type of columns: \
+    if a column is string, the value should be enclosed in quotes. \
+    If you are writing CTEs then include all the required columns. \
+    While concatenating a non string column, make sure cast the column to string. \
+    For date columns comparing to string , please cast the string input.\
+    For string columns, check if it is a categorical column and only use the appropriate values provided in the schema.\
+
+    SCHEMA:
+    ## {table_schema} ##
+
+    QUESTION:
+    ##
+    {question}
+    ##
+
+
+    IMPORTANT: MAKE SURE THE OUTPUT IS JUST THE SQL CODE AND NOTHING ELSE. Ensure the appropriate CATALOG is used in the query and SCHEMA is specified when reading the tables.
+    ##
+
+    OUTPUT:
+    """
+    prompt_template = PromptTemplate.from_template(template_string)
+
+    ### Defining the LLM chain
+    llm_chain = LLMChain(
+        llm=ChatOpenAI(model="gpt-4o-mini",temperature=0),
+        prompt=prompt_template
+    )
+
+    # response =  llm_chain.invoke({"question":question,"mermaid_code":mermaid_code,"catalog":catalog,"schema":schema})
+    response =  llm_chain.invoke({"question":question,"table_schema":table_schema})
+    output = response['text']
+
+    return output
+
+
+# Function to create SQL code for the selected question and return the data from the database
+@st.experimental_fragment
+@st.cache_data
+def create_advanced_sql(question,sql_code,mermaid_code,catalog,schema):
 
     ### Defining the prompt template
     template_string = """ 
@@ -206,7 +322,13 @@ def create_sql(question,mermaid_code,catalog,schema):
     Your task is to generate a working SQL query using the fields and relationships between the tables as depicted in the Mermaid code. 
     The SQL query should be able to run in Databricks.
 
+
     INPUT:
+    SQL_CODE:
+    ##
+    {sql_code}
+    ##
+
     QUESTION:
     ##
     {question}
@@ -225,26 +347,10 @@ def create_sql(question,mermaid_code,catalog,schema):
 
     INSTRUCTIONS:
     ##
-    Understand the ERD:
-    Analyze the Mermaid code to understand the tables, their fields, and the relationships between them.
-    Ensure you correctly identify primary and foreign keys based on the ERD.
-    
-    Match Field Names:
-    Identify and match the field names from the question to the actual field names in the ERD. If the field names in the question are not exact, use your understanding of the ERD to find the closest match.
-    
-    Match Field Types:
-    Identify and match the field datatypes from the question to the actual field datatypes in the ERD. All the SQL logic and operation should reflect keeping in the mind the field types.
-
-    Generate SQL Code:
-    Using the information from the ERD, write a working SQL query that addresses the text question.
-    Ensure the SQL query uses correct table and field names.    
-    The query should be optimized for execution in Databricks.
-    
-    SQL Formatting:
-    Format the SQL query for readability, using proper indentation and line breaks.
+    1. Take the SQL_CODE and create a WITH clause.
+    2. Based on the QUESTION, MERMAID CODE and the WITH clause, generate the final SQL query.
 
     IMPORTANT: MAKE SURE THE OUTPUT IS JUST THE SQL CODE AND NOTHING ELSE. Ensure the appropriate CATALOG is used in the query and SCHEMA is specified when reading the tables.
-    There should not be any limit statements in the generated SQL code.
     ##
 
 
@@ -258,10 +364,11 @@ def create_sql(question,mermaid_code,catalog,schema):
         prompt=prompt_template
     )
 
-    response =  llm_chain.invoke({"question":question,"mermaid_code":mermaid_code,"catalog":catalog,"schema":schema})
+    response =  llm_chain.invoke({"question":question,"sql_code":sql_code,"mermaid_code":mermaid_code,"catalog":catalog,"schema":schema})
     output = response['text']
 
     return output
+
 
 
 # Function to load data from the database given the SQL query
@@ -273,7 +380,7 @@ def load_data_from_query(query):
                     http_path       = os.getenv("DATABRICKS_HTTP_PATH"),
                     access_token    = os.getenv("DATABRICKS_ACCESS_TOKEN"))
 
-    query = query.replace(";","")
-    query = query + f" LIMIT 1000;"
+    # query = query.replace(";","")
+    # query = query + f" LIMIT 1000;"
     df = pd.read_sql(sql=query,con=conn)
     return df         
