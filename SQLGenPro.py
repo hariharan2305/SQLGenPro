@@ -17,6 +17,7 @@ sys.path.append(os.path.abspath('src'))
 from src.add_logo import add_logo
 from src.utils import list_catalog_schema_tables, create_erd_diagram, mermaid, process_llm_response_for_mermaid, quick_analysis 
 from src.utils import  create_sql, load_data_from_query, process_llm_response_for_sql, create_advanced_sql, get_enriched_database_schema
+from src.utils import validate_and_correct_sql, add_to_user_history
 
 # Page Config
 st.set_page_config(
@@ -108,13 +109,30 @@ if authentication_status:
                 if st.checkbox("Analyze"):
                     st.write(f"##### {selected_question}")
                     # st.text(mermaid_code)
-                    response_sql = create_sql(selected_question,table_schema)
-                    response_sql = process_llm_response_for_sql(response_sql)
-                    st.code(response_sql)
-                    if st.button("Query Sample Data"):
-                        df_query = load_data_from_query(response_sql)
-                        # PLACEHOLDER: Insert the selected question along with the response_sql in the database dev_tools.sqlgenpro_user_query_history
-                        st.write(df_query)
+                    response_sql_qa = create_sql(selected_question,table_schema)
+                    response_sql_qa = process_llm_response_for_sql(response_sql_qa)
+                    
+                    # Self-correction loop
+                    flag, response_sql_qa = validate_and_correct_sql(response_sql_qa,table_schema)
+                    while flag != 'Correct':
+                        flag, response_sql_qa = validate_and_correct_sql(response_sql_qa,table_schema)
+
+                    st.code(response_sql_qa)
+                    col1,col2 = st.columns(2)
+                    if col1.button("Query Sample Data"):
+                        df_query = load_data_from_query(response_sql_qa)                        
+                        col1.write(df_query)
+                    
+                    # Saving the Favourites    
+                    # Adding session_state for favourite button
+                    if 'fav_ind_qa' not in st.session_state:
+                        st.session_state.fav_ind_qa = False
+
+                    fav_ind_qa = col2.button("Save the query",key="ddd34-13")
+                    if fav_ind_qa:
+                        st.session_state.fav_ind_qa = True
+                        add_to_user_history(name,selected_question,response_sql_qa,favourite_ind=True)
+                        col2.write("Added to favourites!") 
                         
 
             else:
@@ -123,12 +141,31 @@ if authentication_status:
                 if st.checkbox("Analyze"):
                     st.write(f"##### {selected_question}")
                     # st.text(mermaid_code)
-                    response_sql = create_sql(selected_question,table_schema)
-                    response_sql = process_llm_response_for_sql(response_sql)
-                    st.code(response_sql)
-                    if st.button("Query Sample Data"):
-                        df_query = load_data_from_query(response_sql)
-                        st.write(df_query)
+                    response_sql_qa = create_sql(selected_question,table_schema)
+                    response_sql_qa = process_llm_response_for_sql(response_sql_qa)
+
+                    # Self-correction loop
+                    flag, response_sql_qa = validate_and_correct_sql(response_sql_qa,table_schema)
+                    while flag != 'Correct':
+                        flag, response_sql_qa = validate_and_correct_sql(response_sql_qa,table_schema)
+
+                    st.code(response_sql_qa)
+                    col1,col2 = st.columns(2)
+                    if col1.button("Query Sample Data"):
+                        df_query = load_data_from_query(response_sql_qa)
+                        col1.write(df_query)
+
+                    # Saving the Favourites    
+                    # Adding session_state for favourite button
+                    if 'fav_ind_qa_2' not in st.session_state:
+                        st.session_state.fav_ind_qa_2 = False
+
+                    fav_ind_qa_2 = col2.button("Save the query",key="dd34-13")
+                    if fav_ind_qa_2:
+                        st.session_state.fav_ind_qa_2 = True
+                        add_to_user_history(name,selected_question,response_sql_qa,favourite_ind=True)
+                        col2.write("Added to favourites!")  
+
 
         # Deep-Dive Analysis
         st.markdown("<h2 style='text-align: left; color: red;'> Deep-Dive Analysis </h2>", unsafe_allow_html=True)
@@ -138,16 +175,34 @@ if authentication_status:
 
             generate_sql_1 = st.checkbox("Generate SQL",key="dd-11")
             if generate_sql_1:
-                response_sql = create_sql(dd_question,table_schema)
-                response_sql = process_llm_response_for_sql(response_sql)
-                st.code(response_sql)
+                response_sql_1 = create_sql(dd_question,table_schema)
+                response_sql_1 = process_llm_response_for_sql(response_sql_1)
 
-                col1, col2 = st.columns(2)
+                # Self-correction loop
+                flag, response_sql_1 = validate_and_correct_sql(response_sql_1,table_schema)
+                while flag != 'Correct':
+                    flag, response_sql_1 = validate_and_correct_sql(response_sql_1,table_schema)
+
+                st.code(response_sql_1)
+
+                col1, col2 = st.columns(2)                
+
                 query_sample_data_1 = col1.checkbox("Query Sample Data",key="dd-12")
                 if query_sample_data_1:
-                    df_query_1 = load_data_from_query(response_sql)
+                    df_query_1 = load_data_from_query(response_sql_1)
                     col1.write(df_query_1)
-                col2.checkbox("Save the query",key="dd-13")
+
+                # Saving the Favourites    
+                # Adding session_state for favourite button
+                if 'fav_ind_1' not in st.session_state:
+                    st.session_state.fav_ind_1 = False
+
+                fav_ind_1 = col2.button("Save the query",key="dd-13")
+                if fav_ind_1:
+                    st.session_state.fav_ind_1 = True
+                    add_to_user_history(name,dd_question,response_sql_1,favourite_ind=True)
+                    col2.write("Added to favourites!")
+
 
                 build_1 = col1.checkbox("Build on top of this result?",key="dd-21")
                 if build_1:
@@ -155,16 +210,33 @@ if authentication_status:
 
                     generate_sql_2 = st.checkbox("Generate SQL",key="dd-24")
                     if generate_sql_2:
-                        response_sql = create_advanced_sql(dd_question,response_sql,mermaid_code,catalog,schema)
-                        response_sql = process_llm_response_for_sql(response_sql)
-                        st.code(response_sql)
+                        response_sql_2 = create_advanced_sql(dd_question_2,response_sql_1,table_schema)
+                        response_sql_2 = process_llm_response_for_sql(response_sql_2)
+
+                        # Self-correction loop
+                        flag, response_sql_2 = validate_and_correct_sql(response_sql_2,table_schema)
+                        while flag != 'Correct':
+                            flag, response_sql_2 = validate_and_correct_sql(response_sql_2,table_schema)
+
+                        st.code(response_sql_2)
 
                         col1, col2 = st.columns(2)
                         query_sample_data_2 = col1.checkbox("Query Sample Data",key="dd-25")
                         if query_sample_data_2:
-                            df_query_2 = load_data_from_query(response_sql)
+                            df_query_2 = load_data_from_query(response_sql_2)
                             col1.write(df_query_2)
+                                                
                         
-                        col2.checkbox("Save the query",key="dd-26")
+                        # Saving the Favourites    
+                        # Adding session_state for favourite button
+                        if 'fav_ind_2' not in st.session_state:
+                            st.session_state.fav_ind_2 = False
+
+                        fav_ind_2 = col2.button("Save the query",key="dd3-13")
+                        if fav_ind_2:
+                            st.session_state.fav_ind_2 = True
+                            add_to_user_history(name,dd_question_2,response_sql_2,favourite_ind=True)
+                            col2.write("Added to favourites!")  
+                            
 
 

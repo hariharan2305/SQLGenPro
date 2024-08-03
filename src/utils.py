@@ -217,14 +217,15 @@ def create_erd_diagram(catalog,schema,tables_list):
 @st.cache_data
 def quick_analysis(user_name,table_schema):
     ### Getting the user_query_history details to list the top 5 queries for the user
-    df_user = load_user_query_history(user_name)
+    # df_user = load_user_query_history(user_name)
 
     # check if df_user is empty, if yes then create user_history = [] else create user_history = df_user['question'].tolist()
-    if df_user.empty:
-        user_history = []
-    else:
-        user_history = df_user['question'].tolist()
+    # if df_user.empty:
+    #     user_history = []
+    # else:
+    #     user_history = df_user['question'].tolist()
 
+    user_history = []
 
     ### Defining the output schema from the LLM        
     output_schema = ResponseSchema(name="quick_analysis_questions",description="Generated Quick Analysis questions for the given tables list")
@@ -304,7 +305,6 @@ def create_sql(question,table_schema):
         prompt=prompt_template
     )
 
-    # response =  llm_chain.invoke({"question":question,"mermaid_code":mermaid_code,"catalog":catalog,"schema":schema})
     response =  llm_chain.invoke({"question":question,"table_schema":table_schema})
     output = response['text']
 
@@ -314,13 +314,15 @@ def create_sql(question,table_schema):
 # Function to create SQL code for the selected question and return the data from the database
 @st.experimental_fragment
 @st.cache_data
-def create_advanced_sql(question,sql_code,mermaid_code,catalog,schema):
+def create_advanced_sql(question,sql_code,table_schema):
 
     ### Defining the prompt template
     template_string = """ 
-    You are provided with a text question and a Mermaid code that represents the Entity-Relationship Diagram (ERD) of selected tables from a database. 
-    Your task is to generate a working SQL query using the fields and relationships between the tables as depicted in the Mermaid code. 
-    The SQL query should be able to run in Databricks.
+    You are a expert data engineer working with a Databricks environment.\
+    Your task is to generate a working SQL query in Databricks SQL dialect. \
+    Enclose the complete SQL_CODE in a WITH clause and name it as MASTER. DON'T ALTER THE given SQL_CODE. \
+    Then based on the QUESTION and the master WITH clause, generate the final SQL query based on the WITH clause.\
+    ONLY IF additional information is needed to answer the QUESTION, then use the SCHEMA to join the details to get the final answer. \
 
 
     INPUT:
@@ -329,28 +331,15 @@ def create_advanced_sql(question,sql_code,mermaid_code,catalog,schema):
     {sql_code}
     ##
 
+    SCHEMA:
+    ## {table_schema} ##
+
     QUESTION:
     ##
     {question}
     ##
 
-    MERMAID CODE:
-    ##
-    {mermaid_code}
-    ##
-
-    CATALOG:
-    ## {catalog} ##
-
-    SCHEMA:
-    ## {schema} ##
-
-    INSTRUCTIONS:
-    ##
-    1. Take the SQL_CODE and create a WITH clause.
-    2. Based on the QUESTION, MERMAID CODE and the WITH clause, generate the final SQL query.
-
-    IMPORTANT: MAKE SURE THE OUTPUT IS JUST THE SQL CODE AND NOTHING ELSE. Ensure the appropriate CATALOG is used in the query and SCHEMA is specified when reading the tables.
+    IMPORTANT: MAKE SURE THE OUTPUT IS JUST THE SQL CODE AND NOTHING ELSE.
     ##
 
 
@@ -364,7 +353,7 @@ def create_advanced_sql(question,sql_code,mermaid_code,catalog,schema):
         prompt=prompt_template
     )
 
-    response =  llm_chain.invoke({"question":question,"sql_code":sql_code,"mermaid_code":mermaid_code,"catalog":catalog,"schema":schema})
+    response =  llm_chain.invoke({"sql_code":sql_code,"question":question,"table_schema":table_schema})
     output = response['text']
 
     return output
@@ -384,3 +373,92 @@ def load_data_from_query(query):
     # query = query + f" LIMIT 1000;"
     df = pd.read_sql(sql=query,con=conn)
     return df         
+
+# Function to validate if self-correction is needed for the generated SQL query
+@st.experimental_fragment
+def self_correction(query):
+    error_msg = ""
+
+    try:
+        df = load_data_from_query(query)
+        # print(df.shape)
+        # df.head()
+        error_msg += "Successful"
+    except Exception as e:
+        error_msg += str(e)
+    
+    if error_msg == "Successful":
+        return error_msg
+    else:
+        # print("There is error")
+        # print(error_msg)
+        return error_msg
+
+# Function to validate and self-correct generated SQL query    
+@st.experimental_fragment
+def correct_sql(question,sql_code,table_schema,error_msg):
+
+    ### Defining the prompt template
+    template_string = """ 
+    You are a expert data engineer working with a Databricks environment.\
+    Your task is to modify the SQL_CODE using Databricks SQL dialect based on the QUESTION, SCHEMA and the ERROR_MESSAGE. \
+    If ERROR_MESSAGE is provided, then make sure to correct the SQL query according to that. \
+
+    SCHEMA:
+    ## {table_schema} ##
+
+    ERROR_MESSAGE:
+    ## {error_msg} ##
+
+    SQL_CODE:
+    ##
+    {sql_code}
+
+    QUESTION:
+    ## {question} ##
+
+    ##
+
+
+    IMPORTANT: MAKE SURE THE OUTPUT IS JUST THE SQL CODE AND NOTHING ELSE. Ensure the appropriate CATALOG is used in the query and SCHEMA is specified when reading the tables.
+    ##
+
+    OUTPUT:
+    """
+    prompt_template = PromptTemplate.from_template(template_string)
+
+    ### Defining the LLM chain
+    llm_chain = LLMChain(
+        llm=ChatOpenAI(model="gpt-4o-mini",temperature=0),
+        prompt=prompt_template
+    )
+
+    response =  llm_chain.invoke({"question":question,"sql_code":sql_code,"table_schema":table_schema,"error_msg":error_msg})
+    output = response['text']
+
+    return output
+
+# Final function to validate and self-correct
+def validate_and_correct_sql(query,table_schema):
+    error_msg = self_correction(query)
+
+    if error_msg == "Successful":
+        # print("Query is successful")
+        return "Correct",query
+    else:
+        modified_query = correct_sql("List the details of the menu item table",query,table_schema,error_msg=error_msg)
+        return "Incorrect",modified_query
+    
+
+# Add the selected question to the user history
+@st.experimental_fragment
+def add_to_user_history(user_name,question,query,favourite_ind):
+    conn = sql.connect(server_hostname = os.getenv("DATABRICKS_SERVER_HOSTNAME"),
+                    http_path       = os.getenv("DATABRICKS_HTTP_PATH"),
+                    access_token    = os.getenv("DATABRICKS_ACCESS_TOKEN"))
+    
+    user_history_table = "hive_metastore.dev_tools.sqlgenpro_user_query_history"
+
+    query = f"""INSERT INTO {user_history_table} VALUES ('{user_name}',current_timestamp(),'{question}',"{query}",{favourite_ind})"""
+    # query = f"SELECT * FROM {user_history_table}"
+    df = pd.read_sql(sql=query,con=conn)
