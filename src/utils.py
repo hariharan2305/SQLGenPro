@@ -27,7 +27,7 @@ def load_user_query_history(user_name):
                     http_path       = os.getenv("DATABRICKS_HTTP_PATH"),
                     access_token    = os.getenv("DATABRICKS_ACCESS_TOKEN"))
 
-    query = f"SELECT * FROM dev_tools.sqlgenpro_user_query_history WHERE user_name = '{user_name}' AND timestamp > current_date - 7 ORDER BY query_count DESC LIMIT 5"
+    query = f"SELECT * FROM dev_tools.sqlgenpro_user_query_history WHERE user_name = '{user_name}' AND timestamp > current_date - 20"
     df = pd.read_sql(sql=query,con=conn)
     return df
 
@@ -215,17 +215,7 @@ def create_erd_diagram(catalog,schema,tables_list):
 # Function to create Quick Analysis questions based on the given schema and tables
 @st.experimental_fragment
 @st.cache_data
-def quick_analysis(user_name,table_schema):
-    ### Getting the user_query_history details to list the top 5 queries for the user
-    # df_user = load_user_query_history(user_name)
-
-    # check if df_user is empty, if yes then create user_history = [] else create user_history = df_user['question'].tolist()
-    # if df_user.empty:
-    #     user_history = []
-    # else:
-    #     user_history = df_user['question'].tolist()
-
-    user_history = []
+def quick_analysis(table_schema):
 
     ### Defining the output schema from the LLM        
     output_schema = ResponseSchema(name="quick_analysis_questions",description="Generated Quick Analysis questions for the given tables list")
@@ -235,20 +225,14 @@ def quick_analysis(user_name,table_schema):
     ### Defining the prompt template
     template_string = """
     Using the provided SCHEMA (delimited by ##), generate the top 5 "quick analysis" questions based on the relationships between the tables which can be answered by creating a Databricks SQL code. 
-    These questions should be practical and insightful, targeting the kind of business inquiries a product manager or analyst would typically investigate daily.
-    If the user_history is empty, then create the questions based on the given Mermaid code. If the user_history is not empty, then create the questions based on the user_history and the given Mermaid code.
+    These questions should be practical and insightful, targeting the kind of business inquiries a product manager or analyst would typically investigate daily.    
 
     SCHEMA:
     ##
     {table_schema}
     ##
 
-    User History:
-    ##
-    {user_history}
-    ##
-
-    The output should be in a nestod JSON format with the following structure:
+    The output should be in a nested JSON format with the following structure:
     {fomat_instructions}
      """
     
@@ -261,7 +245,7 @@ def quick_analysis(user_name,table_schema):
         output_parser=output_parser
     )
 
-    response =  llm_chain.invoke({"table_schema":table_schema, "user_history":user_history,"fomat_instructions":format_instructions})
+    response =  llm_chain.invoke({"table_schema":table_schema,"fomat_instructions":format_instructions})
     # output = response['text']  
 
     return response
@@ -439,14 +423,14 @@ def correct_sql(question,sql_code,table_schema,error_msg):
     return output
 
 # Final function to validate and self-correct
-def validate_and_correct_sql(query,table_schema):
+def validate_and_correct_sql(question,query,table_schema):
     error_msg = self_correction(query)
 
     if error_msg == "Successful":
         # print("Query is successful")
         return "Correct",query
     else:
-        modified_query = correct_sql("List the details of the menu item table",query,table_schema,error_msg=error_msg)
+        modified_query = correct_sql(question,query,table_schema,error_msg=error_msg)
         return "Incorrect",modified_query
     
 

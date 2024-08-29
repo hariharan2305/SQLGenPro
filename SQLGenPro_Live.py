@@ -17,7 +17,10 @@ sys.path.append(os.path.abspath('src'))
 from src.add_logo import add_logo
 from src.utils import list_catalog_schema_tables, create_erd_diagram, mermaid, process_llm_response_for_mermaid, quick_analysis 
 from src.utils import  create_sql, load_data_from_query, process_llm_response_for_sql, create_advanced_sql, get_enriched_database_schema
-from src.utils import validate_and_correct_sql, add_to_user_history
+from src.utils import validate_and_correct_sql, add_to_user_history, load_user_query_history
+
+# Hello World
+# st.write("# Hello People!!")
 
 # Page Config
 st.set_page_config(
@@ -32,9 +35,6 @@ st.set_page_config(
 st.markdown("<h1 style='text-align: center; color: orange;'> SQLGenPro &#128640; </h1>", unsafe_allow_html=True)
 
 st.markdown("<h6 style='text-align: center; color: white;'> Productivity Improvement tool for Product Managers, Business stakeholders and even intermediate-coders when it comes to working with data stored in a traditional SQL database. </h6>", unsafe_allow_html=True)
-
-# Adding the logo
-add_logo("artifacts/project_pro_logo_white.png")
 
 # Adding the authentication
 with open('authenticator.yml') as f:
@@ -54,6 +54,7 @@ if authentication_status:
     authenticator.logout('Logout','main')
     st.write(f"Welcome *{name}*!")
 
+    # All our application logic goes here.
     # Selecting the Catalog, Schema and Table in the Target Database
     st.sidebar.image('artifacts/Databricks_Logo_2.png')
     result_tables = list_catalog_schema_tables()
@@ -94,17 +95,17 @@ if authentication_status:
                 mermaid_code = process_llm_response_for_mermaid(response)
                 mermaid(mermaid_code)
             
-            # Getting the table schema
-            table_schema = get_enriched_database_schema(catalog,schema,table_list)
+        # Getting the table schema
+        table_schema = get_enriched_database_schema(catalog,schema,table_list)
 
-        
+############################################################################################################
         # Quick Analysis
         st.markdown("<h2 style='text-align: left; color: red;'> Quick Analysis </h2>", unsafe_allow_html=True)
         with st.expander(":red[View the Section]"):
-            quick_analysis_questions = quick_analysis(user_name,mermaid_code)
+            quick_analysis_questions = quick_analysis(table_schema)
             if st.button("Need new ideas?"):
                 quick_analysis.clear()
-                quick_analysis_questions = quick_analysis(user_name,table_schema)
+                quick_analysis_questions = quick_analysis(table_schema)
                 questions = quick_analysis_questions['text']['quick_analysis_questions']
                 selected_question = st.selectbox("Select the question", options=questions)
                 if st.checkbox("Analyze"):
@@ -114,9 +115,9 @@ if authentication_status:
                     response_sql_qa = process_llm_response_for_sql(response_sql_qa)
                     
                     # Self-correction loop
-                    flag, response_sql_qa = validate_and_correct_sql(response_sql_qa,table_schema)
+                    flag, response_sql_qa = validate_and_correct_sql(selected_question,response_sql_qa,table_schema)
                     while flag != 'Correct':
-                        flag, response_sql_qa = validate_and_correct_sql(response_sql_qa,table_schema)
+                        flag, response_sql_qa = validate_and_correct_sql(selected_question,response_sql_qa,table_schema)
 
                     st.code(response_sql_qa)
                     col1,col2 = st.columns(2)
@@ -146,9 +147,9 @@ if authentication_status:
                     response_sql_qa = process_llm_response_for_sql(response_sql_qa)
 
                     # Self-correction loop
-                    flag, response_sql_qa = validate_and_correct_sql(response_sql_qa,table_schema)
+                    flag, response_sql_qa = validate_and_correct_sql(selected_question,response_sql_qa,table_schema)
                     while flag != 'Correct':
-                        flag, response_sql_qa = validate_and_correct_sql(response_sql_qa,table_schema)
+                        flag, response_sql_qa = validate_and_correct_sql(selected_question,response_sql_qa,table_schema)
 
                     st.code(response_sql_qa)
                     col1,col2 = st.columns(2)
@@ -168,6 +169,25 @@ if authentication_status:
                         col2.write("Added to favourites!")  
 
 
+############################################################################################################
+
+        # Favourite Section
+        st.markdown("<h2 style='text-align: left; color: red;'> Your Favourites </h2>", unsafe_allow_html=True)
+        with st.expander(":red[View the Section]"):
+            fav_df = load_user_query_history(user_name=name)
+            fav_question = st.selectbox("Select the question",options=fav_df['question'].unique().tolist())
+            fav_sql = fav_df[fav_df['question']==fav_question]['query'].values[0]
+            st.write(f"##### {fav_question}")
+            st.code(fav_sql)
+            
+            col1, col2 = st.columns(2)                
+
+            fav_sample_data = col1.checkbox("Query Sample Data",key="dd-12")
+            if fav_sample_data:
+                fav_query = load_data_from_query(fav_sql)
+                col1.write(fav_query)
+
+############################################################################################################
         # Deep-Dive Analysis
         st.markdown("<h2 style='text-align: left; color: red;'> Deep-Dive Analysis </h2>", unsafe_allow_html=True)
 
@@ -188,7 +208,7 @@ if authentication_status:
 
                 col1, col2 = st.columns(2)                
 
-                query_sample_data_1 = col1.checkbox("Query Sample Data",key="dd-12")
+                query_sample_data_1 = col1.checkbox("Query Sample Data",key="dd-102")
                 if query_sample_data_1:
                     df_query_1 = load_data_from_query(response_sql_1)
                     col1.write(df_query_1)
@@ -233,11 +253,13 @@ if authentication_status:
                         if 'fav_ind_2' not in st.session_state:
                             st.session_state.fav_ind_2 = False
 
-                        fav_ind_2 = col2.button("Save the query",key="dd3-13")
+                        fav_ind_2 = col2.button("Save the query",key="dd3-133")
                         if fav_ind_2:
                             st.session_state.fav_ind_2 = True
                             add_to_user_history(name,dd_question_2,response_sql_2,favourite_ind=True)
                             col2.write("Added to favourites!")  
-                            
+        
+        
 
-
+else:
+    st.write("Please login to continue.")
